@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>EnergyIQ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f4f7f5;--card:#fff;--tx:#14221b;--mu:#64756b;--bd:#dde6e0;--ac:#16a34a;--wa:#d97706;--er:#dc2626}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1511;--card:#16211b;--tx:#e6f0ea;--mu:#8da197;--bd:#27362d;--ac:#34d399;--wa:#fbbf24;--er:#f87171}}
+:root[data-theme=dark]{--bg:#0d1511;--card:#16211b;--tx:#e6f0ea;--mu:#8da197;--bd:#27362d;--ac:#34d399;--wa:#fbbf24;--er:#f87171}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--bd);background:var(--card);position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+h1{font-size:18px;margin:0}h1 span{color:var(--ac)}h2{font-size:15px;margin:0 0 8px}
+button,select{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:6px 10px;cursor:pointer}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+nav{display:flex;gap:6px;overflow-x:auto;padding:10px 14px}nav button{white-space:nowrap}
+main{padding:0 14px 24px;max-width:1100px;margin:auto}
+.g{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.k{font-size:24px;font-weight:700}.mu{color:var(--mu);font-size:12px}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600;color:#fff}
+.hi{background:var(--er)}.me{background:var(--wa)}.lo{background:var(--ac)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--bd)}
+.row:first-of-type{border-top:0}
+.map{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tile{border-radius:10px;padding:10px;color:#fff;min-height:70px;cursor:pointer}
+.sw{width:38px;height:22px;border-radius:99px;background:var(--bd);position:relative;border:0;padding:0}
+.sw.on{background:var(--ac)}.sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s}.sw.on::after{left:19px}
+pre{white-space:pre-wrap;overflow-x:auto;background:var(--bg);padding:10px;border-radius:8px;font-size:12px;margin:0}
+.why{background:var(--bg);border-left:3px solid var(--ac);padding:6px 10px;margin-top:6px;font-size:12px;border-radius:4px}
+.sc{overflow-x:auto}svg{max-width:100%}
+</style></head><body>
+<header><h1>Energy<span>IQ</span> <span class="mu" id="live">● live</span></h1>
+<div><select id="role"><option value="admin">Admin</option><option value="student">Student / Faculty</option></select>
+<button id="th">🌓</button></div></header>
+<nav id="nav"></nav><main id="app"></main>
+<script>
+// ---------- seeded simulated data ----------
+let s=7;const rnd=()=>(s=(s*16807)%2147483647)/2147483647;
+const B=[{n:"Science Block",e:"🔬",base:62},{n:"Engineering",e:"⚙️",base:78},{n:"Library",e:"📚",base:41},{n:"Hostel A",e:"🛏️",base:55},{n:"Admin Block",e:"🏢",base:33}];
+const RT=["Lab 3","Class 101","Class 204","Corridor","Lounge","Office"];
+const rooms=[];B.forEach((b,bi)=>RT.forEach((r,ri)=>rooms.push({b:bi,name:r,fl:1+(ri%3),occ:rnd()>.55,src:["PIR","Camera","Timetable"][ri%3],lights:true,fan:true,ac:ri<3,kw:0,empty:0})));
+rooms.forEach(r=>r.empty=r.occ?0:Math.floor(rnd()*5)+1);
+const hour=new Date().getHours();
+const ld=h=>.45+.55*Math.exp(-Math.pow((h-13)/4.5,2));
+function kwOf(r,auto){const on=auto?r.occ:true;return (on?(r.lights?.4:0)+(r.fan?.15:0)+(r.ac?2.4:0):.05)*(r.occ?1:auto?1:.9)}
+// 30-day history, baseline vs EnergyIQ (automation kicks in day 15)
+const days=[];for(let d=0;d<30;d++){const wk=(d%7>4)?.6:1;const base=Math.round(B.reduce((a,b)=>a+b.base,0)*24*.62*wk*(.93+rnd()*.14));days.push({d:d+1,base,act:d<14?base:Math.round(base*(.72+rnd()*.04))})}
+const sav=days.slice(14).reduce((a,x)=>a+x.base-x.act,0);
+const RATE=8.5,EF=.82; // ₹/kWh, kg CO2/kWh
+const fc=[];const wx=[31,33,35,34,30,28,32],hol=[0,0,0,0,0,1,1];
+for(let i=0;i<7;i++){const v=Math.round(days[29].act*(1+(wx[i]-31)*.012)*(hol[i]?.62:1)*(.97+rnd()*.06));fc.push({d:["Thu","Fri","Sat","Sun","Mon","Tue","Wed"][i],v,w:wx[i],h:hol[i]})}
+const anoms=[
+{id:1,sev:"hi",t:"Lab 3 AC ran 4h while unoccupied",b:0,kwh:12,why:"PIR reported 0 motion for 4h 12m; AC compressor drew 2.4 kW (normal for empty room: 0.05 kW). Timetable shows no class booked."},
+{id:2,sev:"hi",t:"Hostel A load spike +58% at 02:10",b:3,kwh:9.4,why:"Isolation Forest score −0.31 (threshold −0.10). Deviation vs same weekday median: +58%. No event in calendar; likely geyser/AC left on in vacant rooms."},
+{id:3,sev:"me",t:"Engineering Class 204 fan+lights on, empty 3h",b:1,kwh:1.9,why:"Camera count = 0 since 11:40. Lights and fan still on; last timetable slot ended 11:30."},
+{id:4,sev:"me",t:"Library chiller drawing 22% more power",b:2,kwh:6.1,why:"Power factor dropped 0.92 → 0.78 over 6 days with same outdoor temp. Pattern matches compressor degradation: schedule maintenance."}];
+let tab="dash",bsel=-1,dark=false;
+const tabs={dash:"Dashboard",auto:"Automation",fc:"Forecast",an:"Alerts",sv:"Savings",proj:"Project"};
+const fmt=n=>Math.round(n).toLocaleString();
+// ---------- charts (inline SVG) ----------
+function bars(vals,labels,colors,w=520,h=160){const m=Math.max(...vals)*1.1,bw=w/vals.length;
+return `<div class="sc"><svg viewBox="0 0 ${w} ${h+22}" width="${w}">${vals.map((v,i)=>`<rect x="${i*bw+4}" y="${h-v/m*h}" width="${bw-8}" height="${v/m*h}" rx="4" fill="${colors[i%colors.length]}"/><text x="${i*bw+bw/2}" y="${h+14}" font-size="11" text-anchor="middle" fill="var(--mu)">${labels[i]}</text><text x="${i*bw+bw/2}" y="${h-v/m*h-4}" font-size="10" text-anchor="middle" fill="var(--tx)">${fmt(v)}</text>`).join("")}</svg></div>`}
+function lines(a,b,w=520,h=160){const m=Math.max(...a.map(x=>x))*1.05,n=a.length,X=i=>8+i*(w-16)/(n-1),Y=v=>h-v/m*h+6,P=arr=>arr.map((v,i)=>`${i?"L":"M"}${X(i)},${Y(v)}`).join("");
+return `<div class="sc"><svg viewBox="0 0 ${w} ${h+16}" width="${w}"><path d="${P(a)}" fill="none" stroke="var(--mu)" stroke-width="2" stroke-dasharray="5 4"/><path d="${P(b)}" fill="none" stroke="var(--ac)" stroke-width="2.5"/><line x1="${X(14)}" x2="${X(14)}" y1="0" y2="${h}" stroke="var(--wa)" stroke-dasharray="3 3"/><text x="${X(14)+4}" y="12" font-size="10" fill="var(--wa)">EnergyIQ on</text></svg></div>`}
+// ---------- live state ----------
+let live=B.map(b=>b.base*ld(hour)*.9);
+setInterval(()=>{live=live.map((v,i)=>Math.max(10,v+(rnd()-.5)*4));if(tab==="dash"||tab==="auto")render()},3000);
+const heat=v=>{const t=Math.min(1,v/90);return `hsl(${140-t*140},65%,${38}%)`};
+// ---------- views ----------
+const V={
+dash(){const adm=$role.value==="admin",tot=live.reduce((a,b)=>a+b,0);
+const list=adm?B.map((_,i)=>i):[1];
+return `<div class="g"><div class="c"><div class="mu">Campus load now</div><div class="k">${fmt(tot)} kW</div><div class="mu">${fmt(sav/16)} kWh/day saved vs baseline</div></div>
+<div class="c"><div class="mu">Eco-score ${adm?"(campus)":"(your building: Engineering)"}</div><div class="k" style="color:var(--ac)">${adm?82:76}/100</div><div class="mu">${adm?"Top: Admin Block 91":"Rank 3 of 5 — beat Hostel A to climb"}</div></div></div>
+<div class="c"><h2>Campus heatmap <span class="mu">(tap a building)</span></h2><div class="map">${list.map(i=>`<div class="tile" style="background:${heat(live[i])}" onclick="bsel=${i};render()"><div>${B[i].e} <b>${B[i].n}</b></div><div class="k" style="font-size:18px">${fmt(live[i])} kW</div></div>`).join("")}</div></div>
+${bsel>=0&&list.includes(bsel)?`<div class="c"><h2>${B[bsel].n} — floors & rooms</h2>${rooms.filter(r=>r.b===bsel).map(r=>{r.kw=kwOf(r,true);return `<div class="row"><span>F${r.fl} · ${r.name} ${r.occ?"🟢":"⚪"}</span><span>${r.kw.toFixed(2)} kW</span></div>`}).join("")}</div>`:""}
+<div class="c"><h2>Usage by building (kW, live)</h2>${bars(list.map(i=>live[i]),list.map(i=>B[i].n.split(" ")[0]),["var(--ac)"])}</div>
+<div class="c"><h2>🤖 AI recommendations</h2>${anoms.slice(0,adm?3:1).map(a=>`<div class="row"><span>${a.t}.<br><span class="mu">Saving potential: ${a.kwh} kWh (₹${fmt(a.kwh*RATE)})</span></span></div>`).join("")}<div class="mu">Generated by LLM from anomaly + usage summaries (demo uses templated text).</div></div>`},
+auto(){const adm=$role.value==="admin";if(!adm)return `<div class="c">Controls are available to Facility Managers only.</div>`;
+const on=window.autoOn!==false;const off=rooms.reduce((a,r)=>a+kwOf(r,false),0),a=rooms.reduce((x,r)=>x+kwOf(r,on),0);
+return `<div class="c"><div class="row"><span><b>Occupancy automation</b><br><span class="mu">PIR / camera / timetable fusion</span></span><button class="sw ${on?"on":""}" onclick="autoOn=${!on};render()"></button></div>
+<div class="k">${a.toFixed(0)} kW <span class="mu">vs ${off.toFixed(0)} kW without</span></div><div class="mu">${on?`Saving ${(off-a).toFixed(0)} kW right now by switching off devices in ${rooms.filter(r=>!r.occ).length} empty rooms`:"Automation off: empty rooms keep devices running"}</div></div>
+<div class="c"><h2>Rooms</h2>${rooms.filter((r,i)=>i%2===0).map(r=>`<div class="row"><span>${B[r.b].n.split(" ")[0]} · ${r.name}<br><span class="mu">${r.occ?"Occupied":"Empty "+r.empty+"h"} via ${r.src}</span></span><span>${on&&!r.occ?"💡❌ auto-off":r.occ?"💡 on":"💡 left on"}</span></div>`).join("")}</div>`},
+fc(){const t=fc.reduce((a,x)=>a+x.v,0);
+return `<div class="c"><h2>Next 7 days forecast (kWh)</h2>${bars(fc.map(x=>x.v),fc.map(x=>x.d),fc.map(x=>x.h?"var(--ac)":"var(--wa)"))}<div class="mu">Week total ≈ ${fmt(t)} kWh · MAPE 5.8% on 14-day backtest (Prophet + regressors)</div></div>
+<div class="c"><h2>Why this prediction? (explainable)</h2>
+<div class="why"><b>Tomorrow ${fmt(fc[0].v)} kWh</b>: weather ${fc[0].w}°C (+${(fc[0].w-31)*1.2>0?((fc[0].w-31)*1.2).toFixed(1):0}% cooling load), regular teaching day, automation holds baseline −28%.</div>
+<div class="why"><b>Weekend dip</b>: holiday + hostel-only occupancy → −38% (timetable feature, importance 0.41).</div>
+<div class="mu" style="margin-top:8px">Top drivers: timetable load 41% · temperature 27% · day-of-week 18% · holiday 14%</div></div>`},
+an(){const adm=$role.value==="admin";if(!adm)return `<div class="c">Alerts are visible to facility staff.</div>`;
+return anoms.map(a=>`<div class="c"><div class="row" style="border:0"><b>${a.t}</b><span class="tag ${a.sev}">${a.sev==="hi"?"HIGH":"MED"}</span></div><div class="mu">${B[a.b].n} · potential ${a.kwh} kWh</div><div class="why"><b>Why flagged:</b> ${a.why}</div><div style="margin-top:8px"><button onclick="this.textContent='✓ Notified facility team';this.disabled=1">Send to staff (SMS/Email)</button> <button onclick="this.textContent='Device off sent';this.disabled=1">Turn off</button></div></div>`).join("")},
+sv(){const kwh=sav,cost=kwh*RATE,co2=kwh*EF;const lb=B.map((b,i)=>({n:b.n,s:[91,76,88,69,82][i]})).sort((a,b)=>b.s-a.s);
+return `<div class="g"><div class="c"><div class="mu">kWh saved (16 days)</div><div class="k">${fmt(kwh)}</div></div><div class="c"><div class="mu">Cost saved</div><div class="k">₹${fmt(cost)}</div></div><div class="c"><div class="mu">CO₂ avoided</div><div class="k">${fmt(co2/1000*10)/10} t</div></div></div>
+<div class="c"><h2>Before vs after (daily kWh, 30 days)</h2>${lines(days.map(d=>d.base),days.map(d=>d.act))}<div class="mu">Dashed: baseline · Green: with EnergyIQ. Average reduction ≈ 28%.</div></div>
+<div class="c"><h2>Projected annual (28% cut)</h2><div class="k">₹${fmt(cost/16*365/100000*10)/10} lakh</div><div class="mu">${fmt(kwh/16*365/1000)} MWh · ${fmt(co2/16*365/1000)} t CO₂</div></div>
+<div class="c"><h2>🏆 Building leaderboard (eco-score)</h2>${lb.map((x,i)=>`<div class="row"><span>${i+1}. ${x.n}</span><b>${x.s}</b></div>`).join("")}</div>`},
+proj(){return `<div class="c"><h2>Architecture</h2><div class="sc"><svg viewBox="0 0 640 150" width="640" font-size="11"><defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0L6,3L0,6z" fill="var(--mu)"/></marker></defs>
+${[["IoT sim (MQTT)",10],["FastAPI + WS",140],["TimescaleDB / Postgres",270],["ML: Prophet, IsoForest",400],["React dashboard",530]].map(([t,x])=>`<rect x="${x}" y="20" width="100" height="44" rx="8" fill="var(--bg)" stroke="var(--ac)"/><text x="${x+50}" y="46" text-anchor="middle" fill="var(--tx)">${t.length>14?t.slice(0,t.indexOf(" ",8)):t}</text>`).join("")}
+${[110,240,370,500].map(x=>`<line x1="${x}" x2="${x+30}" y1="42" y2="42" stroke="var(--mu)" marker-end="url(#a)"/>`).join("")}
+<rect x="140" y="95" width="230" height="36" rx="8" fill="var(--bg)" stroke="var(--wa)"/><text x="255" y="117" text-anchor="middle" fill="var(--tx)">LLM API → recommendations</text><text x="320" y="85" text-anchor="middle" fill="var(--mu)">control commands ↩ rules engine</text></svg></div></div>
+<div class="c"><h2>Project structure</h2><pre>energyiq/
+├─ simulator/sim.py        # sensors → MQTT/HTTP
+├─ backend/app/{main,models,routes,rules}.py
+├─ ml/{forecast.py,anomaly.py,explain.py}
+├─ db/schema.sql
+├─ frontend/src/{pages,components,charts}
+└─ docker-compose.yml</pre></div>
+<div class="c"><h2>Setup</h2><pre>docker compose up -d db
+pip install -r backend/requirements.txt
+python simulator/sim.py --days 30 --seed 7
+python ml/forecast.py && python ml/anomaly.py
+uvicorn backend.app.main:app --reload
+cd frontend && npm i && npm run dev</pre></div>
+<div class="c"><h2>2-minute demo script</h2><pre>0:00 Campus heatmap live: "Engineering is our hot spot."
+0:25 Automation: toggle ON — kW drops instantly in empty rooms.
+0:50 Alerts: Lab 3 AC ran 4h empty; show WHY panel (PIR + timetable).
+1:15 Forecast: tomorrow's load + drivers (weather, timetable).
+1:35 Savings: 28% cut = ₹${fmt(sav*RATE)} and ${fmt(sav*EF/1000)} t CO₂ in 16 days.
+1:50 Switch to Student view: eco-score and leaderboard.</pre></div>`}};
+// ---------- shell ----------
+const $role=document.getElementById("role"),app=document.getElementById("app"),nav=document.getElementById("nav");
+function render(){nav.innerHTML=Object.entries(tabs).map(([k,v])=>`<button class="${k===tab?"on":""}" onclick="tab='${k}';render()">${v}</button>`).join("");app.innerHTML=V[tab]()}
+$role.onchange=()=>{bsel=-1;render()};
+document.getElementById("th").onclick=()=>{dark=!dark;document.documentElement.dataset.theme=dark?"dark":"light"};
+render();
+</script></body></html>
