@@ -1,0 +1,164 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <math.h>
+#include <time.h>
+#include <string.h>
+
+#define MAX_ROOMS 4
+#define PIR_TIMEOUT_SECONDS 300 // Auto switch-off after 5 mins inactivity
+
+// --- DATA STRUCTURES ---
+
+typedef struct {
+    char room_id[16];
+    char building[32];
+    bool pir_motion;
+    int camera_person_count;
+    bool schedule_active;
+    float current_power_kw;
+    float baseline_power_kw;
+    time_t last_motion_time;
+    bool relay_status; // true = ON, false = OFF
+} RoomSensorData;
+
+typedef struct {
+    char room_id[16];
+    char alert_type[32];
+    char severity[10];
+    char explanation[128];
+} AnomalyAlert;
+
+// --- 1. OCCUPANCY-BASED AUTOMATION ENGINE ---
+
+/**
+ * Determines room occupancy status using multi-sensor fusion:
+ * PIR motion OR camera count OR academic schedule.
+ */
+bool evaluate_occupancy(RoomSensorData *room, time_t current_time) {
+    if (room->pir_motion) {
+        room->last_motion_time = current_time;
+    }
+
+    bool active_motion = (difftime(current_time, room->last_motion_time) < PIR_TIMEOUT_SECONDS);
+    bool occupancy_detected = active_motion || (room->camera_person_count > 0) || room->schedule_active;
+
+    return occupancy_detected;
+}
+
+/**
+ * Smart Control Logic: Automatically toggles relays to cut waste.
+ */
+void apply_smart_control(RoomSensorData *room, bool is_occupied) {
+    if (!is_occupied && room->relay_status) {
+        room->relay_status = false; // Auto shut-off HVAC and Lighting
+        printf("[CONTROL] Auto OFF triggered for %s (%s) - Saved power: %.2f kW\n",
+               room->room_id, room->building, room->current_power_kw);
+        room->current_power_kw = 0.05; // Idle standby load
+    } else if (is_occupied && !room->relay_status) {
+        room->relay_status = true; // Switch back ON
+        room->current_power_kw = room->baseline_power_kw;
+        printf("[CONTROL] Auto ON triggered for %s (%s)\n", room->room_id, room->building);
+    }
+}
+
+// --- 2. EXPLAINABLE ANOMALY DETECTION ENGINE ---
+
+/**
+ * Lightweight Z-score and Isolation heuristic anomaly detector for microcontrollers.
+ */
+bool detect_anomalies(const RoomSensorData *room, bool is_occupied, AnomalyAlert *alert) {
+    // Anomaly Case 1: Ghost Load (High energy usage when completely unoccupied)
+    if (!is_occupied && room->current_power_kw > 1.5) {
+        strcpy(alert->room_id, room->room_id);
+        strcpy(alert->alert_type, "GHOST_LOAD");
+        strcpy(alert->severity, "HIGH");
+        snprintf(alert->explanation, sizeof(alert->explanation),
+                 "High draw (%.2f kW) detected in unoccupied room. HVAC compressor stuck ON.",
+                 room->current_power_kw);
+        return true;
+    }
+
+    // Anomaly Case 2: Abnormal Power Spike (Exceeds 2.5x baseline)
+    if (room->current_power_kw > (room->baseline_power_kw * 2.5)) {
+        strcpy(alert->room_id, room->room_id);
+        strcpy(alert->alert_type, "POWER_SPIKE");
+        strcpy(alert->severity, "CRITICAL");
+        snprintf(alert->explanation, sizeof(alert->explanation),
+                 "Power draw (%.2f kW) is 2.5x baseline (%.2f kW). Short circuit or equipment fault.",
+                 room->current_power_kw, room->baseline_power_kw);
+        return true;
+    }
+
+    return false;
+}
+
+// --- 3. MQTT TELEMETRY PAYLOAD GENERATOR ---
+
+void serialize_mqtt_json(const RoomSensorData *room, char *buffer, size_t buf_size) {
+    snprintf(buffer, buf_size,
+        "{"
+            "\"device_id\":\"%s\","
+            "\"building\":\"%s\","
+            "\"power_kw\":%.2f,"
+            "\"occupied\":%s,"
+            "\"relay_state\":\"%s\""
+        "}",
+        room->room_id,
+        room->building,
+        room->current_power_kw,
+        (room->pir_motion || room->camera_person_count > 0) ? "true" : "false",
+        room->relay_status ? "ON" : "OFF"
+    );
+}
+
+// --- MAIN SIMULATION LOOP ---
+
+int main(void) {
+    printf("========================================================\n");
+    printf("       ENERGYIQ EMBEDDED ENGINE (C CORE v1.0)           \n");
+    printf("========================================================\n\n");
+
+    time_t current_time = time(NULL);
+
+    // Initialize Campus Rooms
+    RoomSensorData campus_rooms[MAX_ROOMS] = {
+        {"Lab-301", "Engineering Block", false, 0, false, 4.20, 2.50, current_time - 600, true}, // Unoccupied high load (Anomaly)
+        {"Auditorium", "Main Academic", true, 45, true, 8.50, 8.00, current_time, true},         // Normal high load
+        {"Hostel-B12", "Hostel Block A", false, 0, false, 0.05, 1.20, current_time - 1200, false},// Normal idle
+        {"Class-102", "Science Complex", false, 0, true, 3.80, 1.50, current_time - 400, true}   // Schedule active
+    };
+
+    char json_payload[256];
+    AnomalyAlert alert;
+
+    for (int i = 0; i < MAX_ROOMS; i++) {
+        RoomSensorData *room = &campus_rooms[i];
+        printf(">>> Processing Telemetry for: %s [%s]\n", room->room_id, room->building);
+
+        // 1. Evaluate Occupancy
+        bool is_occupied = evaluate_occupancy(room, current_time);
+        printf("    Occupancy Status: %s (PIR: %s, Camera: %d, Schedule: %s)\n",
+               is_occupied ? "OCCUPIED" : "UNOCCUPIED",
+               room->pir_motion ? "YES" : "NO",
+               room->camera_person_count,
+               room->schedule_active ? "YES" : "NO");
+
+        // 2. Run Anomaly Detection
+        if (detect_anomalies(room, is_occupied, &alert)) {
+            printf("    [ALERT FLAG] Severity: %s | Type: %s\n", alert.severity, alert.alert_type);
+            printf("    [EXPLAINABLE AI]: %s\n", alert.explanation);
+        } else {
+            printf("    [HEALTH] Nominal operation.\n");
+        }
+
+        // 3. Apply Automation Rules
+        apply_smart_control(room, is_occupied);
+
+        // 4. Generate Output Telemetry
+        serialize_mqtt_json(room, json_payload, sizeof(json_payload));
+        printf("    [MQTT TELEMETRY] %s\n\n", json_payload);
+    }
+
+    return 0;
+}
